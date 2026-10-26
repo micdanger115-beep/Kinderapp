@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Tanz-Reachy – Eltern</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <h1>🎵 Tanz-Reachy</h1>
+        <p id="status" class="status">Verbinde …</p>
+        <div class="progress"><div id="progress-bar"></div></div>
+    </header>
+
+    <main>
+        <section class="row">
+            <button id="play-btn" class="big primary">▶ Nächstes Lied</button>
+            <button id="stop-btn" class="big danger">■ Stopp</button>
+        </section>
+
+        <section>
+            <h2>Lied wählen</h2>
+            <div id="songs" class="songs"></div>
+        </section>
+
+        <section class="row">
+            <button id="sleep-btn" class="big calm">🌙 Gute Nacht</button>
+            <button id="wake-btn" class="big calm">☀️ Aufwecken</button>
+        </section>
+
+        <section>
+            <h2>Einstellungen</h2>
+            <label>Lautstärke <span id="volume-label"></span>
+                <input type="range" id="volume" min="0" max="60" step="5">
+            </label>
+            <label>Spielzeit <span id="minutes-label"></span>
+                <input type="range" id="minutes" min="5" max="30" step="5">
+            </label>
+            <label class="toggle">
+                <input type="checkbox" id="antenna-buttons">
+                Kind darf mit den Antennen starten
+            </label>
+            <p class="hint">Neue Lautstärke gilt ab dem nächsten Lied.</p>
+        </section>
+
+        <p class="hint">Bitte nur unter Aufsicht spielen. Reachy steht am besten stabil auf dem Boden oder einem niedrigen Tisch.</p>
+    </main>
+    <script src="/static/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,81 @@
+:root {
+    --bg: #fff8ef;
+    --card: #ffffff;
+    --text: #3a3247;
+    --muted: #7a7187;
+    --primary: #ff9900;
+    --danger: #e0574f;
+    --calm: #6c8ebf;
+    --active: #ffe2b3;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #1f1b26;
+        --card: #2b2534;
+        --text: #f3eef8;
+        --muted: #b3a9c0;
+        --active: #5a4526;
+    }
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    max-width: 560px;
+    margin-inline: auto;
+}
+
+h1 { font-size: 1.8rem; margin: 0 0 0.25rem; }
+h2 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; }
+
+.status { font-size: 1.1rem; margin: 0.25rem 0 0.5rem; min-height: 1.5em; }
+
+.progress { height: 8px; background: var(--card); border-radius: 4px; overflow: hidden; }
+#progress-bar { height: 100%; width: 0; background: var(--primary); transition: width 0.9s linear; }
+
+.row { display: flex; gap: 12px; margin-top: 1.25rem; }
+.row > * { flex: 1; }
+
+button {
+    font: inherit;
+    border: none;
+    border-radius: 16px;
+    cursor: pointer;
+    min-height: 56px;
+    color: white;
+}
+button:disabled { opacity: 0.4; cursor: default; }
+.big { font-size: 1.15rem; font-weight: 600; padding: 0 12px; }
+.primary { background: var(--primary); }
+.danger { background: var(--danger); }
+.calm { background: var(--calm); }
+
+.songs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.song {
+    background: var(--card);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 12px 8px;
+    min-height: 96px;
+    text-align: center;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+.song .emoji { font-size: 2rem; }
+.song.active { background: var(--active); }
+
+label { display: block; margin: 0.75rem 0; }
+input[type="range"] { width: 100%; height: 44px; accent-color: var(--primary); }
+.toggle { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.toggle input { width: 24px; height: 24px; accent-color: var(--primary); }
+
+.hint { color: var(--muted); font-size: 0.9rem; }
