@@ -152,3 +152,92 @@ def test_motion_is_continuous_across_state_changes(tmp_path):
             assert abs(h1[k] - h2[k]) < 3.0, k
         assert abs(b1 - b2) < np.deg2rad(3.0)
         assert max(abs(x - y) for x, y in zip(a1, a2)) < np.deg2rad(4.0)
+
+
+def test_invalid_numbers_keep_previous_settings(tmp_path):
+    c, robot, clock = make(tmp_path)
+    c.send("settings", {"volume": 0.3, "session_minutes": 10})
+    run_for(c, clock, 0.1)
+    for bad in (float("nan"), float("inf"), "laut", None):
+        c.send("settings", {"volume": bad, "session_minutes": bad, "audio_latency_s": bad})
+        run_for(c, clock, 0.1)
+    assert c.settings.volume == 0.3 and c.settings.session_minutes == 10
+    assert c.settings.audio_latency_s == 0.15
+    press(c, clock, robot)  # Lied startet trotzdem
+    assert c.state == State.PLAYING
+    assert c.status()["session_remaining_s"] > 0
+
+
+def test_stop_during_lullaby_goes_to_sleep(tmp_path):
+    c, robot, clock = make(tmp_path)
+    c.send("sleep")
+    run_for(c, clock, 3)
+    assert c.state == State.BEDTIME
+    c.send("stop")
+    run_for(c, clock, 1)
+    assert c.state == State.ASLEEP and robot.sleeps == 1
+    assert len(robot.media.played) == 1  # Schlaflied startet nicht neu
+
+
+def test_lullaby_is_quieter(tmp_path):
+    c, robot, clock = make(tmp_path)
+    c.send("sleep")
+    run_for(c, clock, 0.1)
+    assert robot.media.played[-1].endswith("gute_nacht_v030.wav")  # 0.4 * 0.7
+
+
+def test_press_after_session_end_does_not_start_new_song(tmp_path):
+    c, robot, clock = make(tmp_path)
+    c.send("settings", {"session_minutes": 1})
+    c.send("play", "stern")
+    run_for(c, clock, 0.1)
+    clock.t += 61  # Lied endet nach Ablauf der Spielzeit
+    robot.push = 0.6  # Kind drückt genau beim Liedende
+    run_for(c, clock, 0.1)
+    robot.push = None
+    run_for(c, clock, 0.1)
+    assert c.state == State.BEDTIME and c.song == LULLABY
+
+
+class FlakyRobot(FakeRobot):
+    def __init__(self, failures):
+        super().__init__()
+        self.failures = failures
+
+    def set_target(self, head, antennas, body_yaw):
+        if self.failures > 0:
+            self.failures -= 1
+            raise ConnectionError("kurz weg")
+        super().set_target(head, antennas, body_yaw)
+
+
+def _run_briefly(c, seconds):
+    import threading
+    import time
+
+    stop = threading.Event()
+    t = threading.Thread(target=c.run, args=(stop,))
+    t.start()
+    time.sleep(seconds)
+    stop.set()
+    t.join(timeout=2)
+    return t
+
+
+def test_single_error_does_not_end_app(tmp_path):
+    robot = FlakyRobot(failures=3)
+    c = Controller(robot, tmp_path, make_head_pose=fake_pose)
+    t = _run_briefly(c, 0.3)
+    assert not t.is_alive()
+    assert len(robot.targets) > 3  # lief nach den Fehlern weiter
+    assert robot.gotos[-1] == 1.5  # beim Beenden in Ruheposition
+
+
+def test_shutdown_while_asleep_keeps_robot_asleep(tmp_path):
+    c, robot, clock = make(tmp_path)
+    c.state = State.ASLEEP
+    stop = __import__("threading").Event()
+    stop.set()
+    c.start = lambda: None  # schon wach/schlafend, kein Aufwachen beim Start
+    c.run(stop)
+    assert robot.gotos == [2.0]  # nur das Aufwachen aus make(), kein Ruhe-goto

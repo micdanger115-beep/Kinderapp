@@ -31,9 +31,27 @@ def test_render_respects_volume_and_has_soft_edges():
     samples = synth.render(SONGS[0], volume=0.4)
     assert samples.dtype == np.float32
     assert np.max(np.abs(samples)) <= 0.4 + 1e-6
-    # weich ein- und ausgeblendet
-    assert np.max(np.abs(samples[:50])) < 0.01
+    # kein Knacken am Anfang, weich ausgeblendet
+    assert abs(samples[0]) < 0.01
     assert np.max(np.abs(samples[-50:])) < 0.01
+
+
+@pytest.mark.parametrize("song", list(ALL_SONGS.values()), ids=lambda s: s.id)
+def test_first_note_is_audible(song):
+    # Das Einblenden darf den ersten Ton nicht verschlucken.
+    samples = synth.render(song, volume=1.0)
+    beat = 60.0 / song.bpm * synth.SAMPLE_RATE
+    first, second = song.notes[0], song.notes[1]
+    peak_first = np.max(np.abs(samples[: int(second.start_beat * beat)]))
+    peak_second = np.max(np.abs(samples[int(second.start_beat * beat) : int((second.start_beat + second.beats) * beat)]))
+    assert peak_first > 0.5 * peak_second
+
+
+def test_lullaby_has_both_halves():
+    # "Guten Abend, gut' Nacht" und "Morgen früh, wenn Gott will" je Strophe
+    assert LULLABY.total_beats / LULLABY.repeats == 48
+    pitches = [n.midi for n in LULLABY.notes]
+    assert pitches[-1] == note_to_midi("C5")  # endet auf dem Grundton
 
 
 def test_song_wav_is_cached(tmp_path):

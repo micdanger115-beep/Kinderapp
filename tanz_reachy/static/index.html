@@ -14,6 +14,15 @@
     </header>
 
     <main>
+        <section id="pin-box" class="pin-box" hidden>
+            <h2 id="pin-title">Eltern-PIN festlegen</h2>
+            <p id="pin-hint" class="hint">Damit nur ihr Reachy über diese Seite steuern könnt. Mindestens 4 Zeichen.</p>
+            <div class="row">
+                <input type="password" id="pin-input" inputmode="numeric" autocomplete="current-password" placeholder="PIN">
+                <button id="pin-btn" class="big primary">OK</button>
+            </div>
+        </section>
+
         <section class="row">
             <button id="play-btn" class="big primary">▶ Nächstes Lied</button>
             <button id="stop-btn" class="big danger">■ Stopp</button>

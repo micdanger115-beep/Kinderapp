@@ -5,6 +5,7 @@ auch ohne Roboter testen lässt (siehe ``tests/``).
 """
 
 import logging
+import math
 import queue
 import threading
 import time
@@ -28,6 +29,8 @@ HOP_S = 0.6
 REST_ANTENNAS_RAD = (-0.1745, 0.1745)  # wie INIT_ANTENNAS_JOINT_POSITIONS im SDK
 
 MAX_VOLUME = 0.6
+LULLABY_VOLUME_FACTOR = 0.7  # Gute-Nacht-Lied leiser als die Tanzlieder
+MAX_TICK_ERRORS = 50  # so viele Fehler in Folge (1 s), dann gibt die App auf
 
 
 class State(str, Enum):
@@ -44,12 +47,22 @@ class Settings:
     antenna_buttons: bool = True  # Kind darf per Antenne starten
     audio_latency_s: float = 0.15  # Tanz wartet so lange auf den Ton
 
-    def sanitized(self) -> "Settings":
+    def sanitized(self, fallback: "Settings | None" = None) -> "Settings":
+        # Ungültige Werte (NaN, unendlich, keine Zahl) behalten den bisherigen Wert.
+        fallback = fallback or Settings()
+
+        def num(value: Any, old: float, lo: float, hi: float) -> float:
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                return old
+            return float(np.clip(value, lo, hi)) if math.isfinite(value) else old
+
         return Settings(
-            volume=float(np.clip(self.volume, 0.0, MAX_VOLUME)),
-            session_minutes=float(np.clip(self.session_minutes, 1.0, 60.0)),
+            volume=num(self.volume, fallback.volume, 0.0, MAX_VOLUME),
+            session_minutes=num(self.session_minutes, fallback.session_minutes, 1.0, 60.0),
             antenna_buttons=bool(self.antenna_buttons),
-            audio_latency_s=float(np.clip(self.audio_latency_s, 0.0, 1.0)),
+            audio_latency_s=num(self.audio_latency_s, fallback.audio_latency_s, 0.0, 1.0),
         )
 
 
@@ -113,7 +126,7 @@ class Controller:
 
     def prerender(self) -> None:
         for song in ALL_SONGS.values():
-            synth.song_wav(song, self.settings.volume, self.cache_dir)
+            synth.song_wav(song, self._volume_for(song), self.cache_dir)
 
     # ---------- Ablauf ----------
     def start(self) -> None:
@@ -143,7 +156,7 @@ class Controller:
         if self.state in (State.PLAYING, State.BEDTIME) and self.song is not None:
             if now - self.song_start > self.song.duration_s + self.settings.audio_latency_s + 0.5:
                 self._song_finished()
-        elif self.state == State.WAITING and now - self.session_start > self.settings.session_minutes * 60:
+        elif self.state == State.WAITING and self._session_over(now):
             self._start_song(LULLABY, State.BEDTIME)
         if self.state == State.ASLEEP:
             return
@@ -152,13 +165,26 @@ class Controller:
     def run(self, stop_event: threading.Event) -> None:
         self.start()
         next_t = self.clock()
+        errors = 0
         try:
             while not stop_event.is_set():
-                self.tick()
+                try:
+                    self.tick()
+                    errors = 0
+                except Exception:
+                    # Ein einzelner Fehler (z. B. kurz keine Verbindung) beendet die App nicht.
+                    errors += 1
+                    logger.warning("Fehler im Steuertakt (%d in Folge)", errors, exc_info=True)
+                    if errors >= MAX_TICK_ERRORS:
+                        raise
                 next_t += TICK_S
+                # Nach einem blockierenden Aufruf nicht alle verpassten Takte nachholen.
+                next_t = max(next_t, self.clock() - TICK_S)
                 time.sleep(max(0.0, next_t - self.clock()))
         finally:
             self._stop_audio()
+            if self.state == State.ASLEEP:
+                return  # Schlafenden Roboter beim Beenden nicht aufwecken
             try:
                 self.robot.goto_target(
                     self.make_head_pose(degrees=True), antennas=list(REST_ANTENNAS_RAD), duration=1.5, body_yaw=0.0
@@ -176,13 +202,21 @@ class Controller:
             if name == "settings":
                 current = asdict(self.settings)
                 merged = {**current, **{k: v for k, v in dict(arg).items() if k in current}}
-                self.settings = Settings(**merged).sanitized()
+                old_volume = self.settings.volume
+                self.settings = Settings(**merged).sanitized(self.settings)
+                if self.settings.volume != old_volume:
+                    # Neue Lautstärke im Hintergrund vorbereiten, damit der Tanz nicht stockt.
+                    threading.Thread(target=self.prerender, daemon=True).start()
             elif name == "play" and self.state != State.ASLEEP:
                 song = ALL_SONGS.get(arg) if arg else None
                 self._start_song(song or self._next_song(), State.PLAYING)
-            elif name == "stop" and self.state in (State.PLAYING, State.BEDTIME):
+            elif name == "stop" and self.state == State.PLAYING:
                 self._stop_audio()
                 self._enter(State.WAITING)
+            elif name == "stop" and self.state == State.BEDTIME:
+                # Gute-Nacht-Lied abbrechen heißt: gleich einschlafen, nicht von vorn beginnen.
+                self._stop_audio()
+                self._song_finished()
             elif name == "sleep" and self.state != State.ASLEEP:
                 self._start_song(LULLABY, State.BEDTIME)
             elif name == "wake" and self.state == State.ASLEEP:
@@ -192,19 +226,26 @@ class Controller:
         self.presses += 1
         if not self.settings.antenna_buttons:
             return
-        if self.state == State.WAITING:
+        if self.state == State.WAITING and not self._session_over(now):
             self._start_song(self._next_song(), State.PLAYING)
         elif self.state == State.PLAYING:
             self.hop_start = now  # Ursache → Wirkung: fröhlicher Extra-Hüpfer
+
+    def _session_over(self, now: float) -> bool:
+        return now - self.session_start > self.settings.session_minutes * 60
 
     def _next_song(self) -> Song:
         song = SONGS[self.next_index % len(SONGS)]
         self.next_index += 1
         return song
 
+    def _volume_for(self, song: Song) -> float:
+        factor = LULLABY_VOLUME_FACTOR if song is LULLABY else 1.0
+        return self.settings.volume * factor
+
     def _start_song(self, song: Song, state: State) -> None:
         self._stop_audio()
-        path = synth.song_wav(song, self.settings.volume, self.cache_dir)
+        path = synth.song_wav(song, self._volume_for(song), self.cache_dir)
         self.song = song
         self._enter(state)
         self.robot.media.play_sound(str(path))
@@ -217,7 +258,10 @@ class Controller:
             self.state = State.ASLEEP
             self.state_start = self.clock()
             self.robot.goto_sleep()
-            self.last_antennas_rad = list(self.robot.get_present_antenna_joint_positions())
+            try:
+                self.last_antennas_rad = list(self.robot.get_present_antenna_joint_positions())
+            except Exception:
+                logger.debug("Antennenposition nach dem Einschlafen nicht lesbar", exc_info=True)
             return
         self._enter(State.WAITING)
 
@@ -236,9 +280,10 @@ class Controller:
             logger.debug("stop_playing fehlgeschlagen", exc_info=True)
 
     def _song_progress(self, now: float) -> float:
-        if self.song is None:
+        song, start = self.song, self.song_start  # einmal lesen: läuft im Webserver-Thread
+        if song is None:
             return 0.0
-        return float(np.clip((now - self.song_start) / self.song.duration_s, 0.0, 1.0))
+        return float(np.clip((now - start) / song.duration_s, 0.0, 1.0))
 
     def _target_pose(self, now: float) -> DancePose:
         if self.state in (State.PLAYING, State.BEDTIME) and self.song is not None:
