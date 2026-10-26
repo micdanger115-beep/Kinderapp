@@ -1,6 +1,6 @@
 import numpy as np
 
-from tanz_reachy.controller import Controller, State, REST_ANTENNAS_RAD
+from tanz_reachy.controller import Controller, State, REST_ANTENNAS_RAD, SLEEP_ANTENNAS_RAD
 from tanz_reachy.songs import LULLABY, SONGS
 
 
@@ -30,6 +30,7 @@ class FakeRobot:
         self.targets = []
         self.gotos = []
         self.sleeps = 0
+        self.calls = []  # Reihenfolge von Motoren-an und Bewegungen
         self.push = None  # Zusatz-Auslenkung der Antennen durch Kinderhand
         self.antennas = list(REST_ANTENNAS_RAD)
 
@@ -37,13 +38,20 @@ class FakeRobot:
         self.targets.append((head, antennas, body_yaw))
         self.antennas = list(antennas)
 
+    def enable_motors(self):
+        self.calls.append("enable_motors")
+
     def goto_target(self, head=None, antennas=None, duration=0.5, body_yaw=0.0):
-        self.gotos.append(duration)
+        self.calls.append("goto_target")
+        if antennas is not None and tuple(antennas) == SLEEP_ANTENNAS_RAD:
+            self.sleeps += 1
+        else:
+            self.gotos.append(duration)
         if antennas is not None:
             self.antennas = list(antennas)
 
     def goto_sleep(self):
-        self.sleeps += 1
+        raise AssertionError("goto_sleep spielt go_sleep.wav an der Lautstärkegrenze vorbei")
 
     def get_present_antenna_joint_positions(self):
         if self.push:
@@ -179,6 +187,32 @@ def test_stop_during_lullaby_goes_to_sleep(tmp_path):
     assert len(robot.media.played) == 1  # Schlaflied startet nicht neu
 
 
+def test_start_enables_motors_before_moving(tmp_path):
+    c, robot, clock = make(tmp_path)
+    assert robot.calls[:2] == ["enable_motors", "goto_target"]
+
+
+def test_wake_enables_motors_again(tmp_path):
+    c, robot, clock = make(tmp_path)
+    c.send("sleep")
+    c.send("stop")
+    run_for(c, clock, 0.1)
+    assert c.state == State.ASLEEP
+    robot.calls.clear()
+    c.send("wake")
+    run_for(c, clock, 0.1)
+    assert robot.calls[:2] == ["enable_motors", "goto_target"]
+    assert c.state == State.WAITING
+
+
+def test_falling_asleep_plays_no_extra_sound(tmp_path):
+    c, robot, clock = make(tmp_path)
+    c.send("sleep")
+    run_for(c, clock, LULLABY.duration_s + 1)
+    assert c.state == State.ASLEEP and robot.sleeps == 1
+    assert len(robot.media.played) == 1  # nur das Schlaflied, kein go_sleep.wav
+
+
 def test_lullaby_is_quieter(tmp_path):
     c, robot, clock = make(tmp_path)
     c.send("sleep")
@@ -241,3 +275,13 @@ def test_shutdown_while_asleep_keeps_robot_asleep(tmp_path):
     c.start = lambda: None  # schon wach/schlafend, kein Aufwachen beim Start
     c.run(stop)
     assert robot.gotos == [2.0]  # nur das Aufwachen aus make(), kein Ruhe-goto
+
+
+def test_sleep_pose_matches_sdk():
+    import pytest
+
+    sdk = pytest.importorskip("reachy_mini.reachy_mini")
+    from tanz_reachy.controller import SLEEP_HEAD_POSE
+
+    assert np.allclose(SLEEP_HEAD_POSE, sdk.SLEEP_HEAD_POSE)
+    assert list(SLEEP_ANTENNAS_RAD) == list(sdk.SLEEP_ANTENNAS_JOINT_POSITIONS)
