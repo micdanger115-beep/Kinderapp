@@ -9,6 +9,7 @@ import math
 import queue
 import threading
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
@@ -41,7 +42,8 @@ SLEEP_S = 3.0  # langsam einschlafen
 
 MAX_VOLUME = 0.6
 LULLABY_VOLUME_FACTOR = 0.7  # Gute-Nacht-Lied leiser als die Tanzlieder
-MAX_TICK_ERRORS = 50  # so viele Fehler in Folge (1 s), dann gibt die App auf
+MAX_ERROR_S = 20.0  # so lange darf der Steuertakt ununterbrochen fehlschlagen, dann gibt die App auf
+STILL_S = 1.5  # "Sofort still": zügig, aber ohne Ruck in die Schlafstellung
 
 
 class State(str, Enum):
@@ -71,7 +73,7 @@ class Settings:
 
         return Settings(
             volume=num(self.volume, fallback.volume, 0.0, MAX_VOLUME),
-            session_minutes=num(self.session_minutes, fallback.session_minutes, 1.0, 60.0),
+            session_minutes=num(self.session_minutes, fallback.session_minutes, 1.0, 30.0),
             antenna_buttons=bool(self.antenna_buttons),
             audio_latency_s=num(self.audio_latency_s, fallback.audio_latency_s, 0.0, 1.0),
         )
@@ -89,10 +91,13 @@ class Controller:
         cache_dir: Path,
         clock: Callable[[], float] = time.monotonic,
         make_head_pose: Callable[..., Any] | None = None,
+        submit: Callable[..., "Future[Any]"] | None = None,
     ) -> None:
         self.robot = robot
         self.cache_dir = cache_dir
         self.clock = clock
+        # Lieder werden in genau einem Hintergrund-Thread erzeugt, nie im Steuertakt.
+        self.submit = submit or ThreadPoolExecutor(max_workers=1, thread_name_prefix="tanz_render").submit
         if make_head_pose is None:
             from reachy_mini.utils import create_head_pose
 
@@ -114,6 +119,7 @@ class Controller:
         self.last_pose = DancePose()
         self.last_antennas_rad = list(REST_ANTENNAS_RAD)
         self.presses = 0
+        self.pending: tuple[Song, State, "Future[Path]"] | None = None  # Lied wartet auf seine WAV-Datei
 
     # ---------- Befehle von außen (Eltern-Webseite) ----------
     def send(self, name: str, arg: Any = None) -> None:
@@ -138,6 +144,10 @@ class Controller:
     def prerender(self) -> None:
         for song in ALL_SONGS.values():
             synth.song_wav(song, self._volume_for(song), self.cache_dir)
+
+    def prerender_in_background(self) -> None:
+        # Läuft im selben Thread wie das Erzeugen beim Abspielen, also immer nur eine Rechnung zugleich.
+        self.submit(self.prerender)
 
     # ---------- Ablauf ----------
     def start(self) -> None:
@@ -166,12 +176,14 @@ class Controller:
         if self.detector.update(now, self.last_antennas_rad, present):
             self._on_press(now)
 
+        if self.pending is not None and self.pending[2].done():
+            self._play_pending()
         if self.state == State.ASLEEP:
             return
         if self.state in (State.PLAYING, State.BEDTIME) and self.song is not None:
             if now - self.song_start > self.song.duration_s + self.settings.audio_latency_s + 0.5:
                 self._song_finished()
-        elif self.state == State.WAITING and self._session_over(now):
+        elif self.state == State.WAITING and self._session_over(now) and not self._lullaby_pending():
             self._start_song(LULLABY, State.BEDTIME)
         if self.state == State.ASLEEP:
             return
@@ -180,17 +192,19 @@ class Controller:
     def run(self, stop_event: threading.Event) -> None:
         self.start()
         next_t = self.clock()
-        errors = 0
+        failing_since: float | None = None
         try:
             while not stop_event.is_set():
                 try:
                     self.tick()
-                    errors = 0
+                    failing_since = None
                 except Exception:
-                    # Ein einzelner Fehler (z. B. kurz keine Verbindung) beendet die App nicht.
-                    errors += 1
-                    logger.warning("Fehler im Steuertakt (%d in Folge)", errors, exc_info=True)
-                    if errors >= MAX_TICK_ERRORS:
+                    # Kurze Störungen (z. B. Daemon hängt einige Sekunden) beenden die App nicht.
+                    now = self.clock()
+                    if failing_since is None:
+                        failing_since = now
+                        logger.warning("Fehler im Steuertakt", exc_info=True)
+                    if now - failing_since > MAX_ERROR_S:
                         raise
                 next_t += TICK_S
                 # Nach einem blockierenden Aufruf nicht alle verpassten Takte nachholen.
@@ -198,14 +212,14 @@ class Controller:
                 time.sleep(max(0.0, next_t - self.clock()))
         finally:
             self._stop_audio()
-            if self.state == State.ASLEEP:
-                return  # Schlafenden Roboter beim Beenden nicht aufwecken
-            try:
-                self.robot.goto_target(
-                    self.make_head_pose(degrees=True), antennas=list(REST_ANTENNAS_RAD), duration=1.5, body_yaw=0.0
-                )
-            except Exception:
-                logger.warning("Ruheposition beim Beenden nicht erreicht", exc_info=True)
+            # Beim Beenden in die Schlafstellung und Motoren aus. Sonst schickt der
+            # Daemon den Roboter selbst schlafen und spielt dabei go_sleep.wav in
+            # voller Lautstärke. Ein schlafender Roboter bleibt einfach liegen.
+            if self.state != State.ASLEEP:
+                try:
+                    self._fall_asleep(STILL_S)
+                except Exception:
+                    logger.warning("Schlafstellung beim Beenden nicht erreicht", exc_info=True)
 
     # ---------- intern ----------
     def _handle_commands(self, now: float) -> None:
@@ -221,19 +235,24 @@ class Controller:
                 self.settings = Settings(**merged).sanitized(self.settings)
                 if self.settings.volume != old_volume:
                     # Neue Lautstärke im Hintergrund vorbereiten, damit der Tanz nicht stockt.
-                    threading.Thread(target=self.prerender, daemon=True).start()
+                    self.prerender_in_background()
             elif name == "play" and self.state != State.ASLEEP:
                 song = ALL_SONGS.get(arg) if arg else None
                 self._start_song(song or self._next_song(), State.PLAYING)
-            elif name == "stop" and self.state == State.PLAYING:
-                self._stop_audio()
-                self._enter(State.WAITING)
-            elif name == "stop" and self.state == State.BEDTIME:
+            elif name == "stop" and (self.state == State.BEDTIME or self._lullaby_pending()):
                 # Gute-Nacht-Lied abbrechen heißt: gleich einschlafen, nicht von vorn beginnen.
                 self._stop_audio()
-                self._song_finished()
-            elif name == "sleep" and self.state != State.ASLEEP:
+                self._fall_asleep()
+            elif name == "stop" and (self.state == State.PLAYING or self.pending is not None):
+                self.pending = None
+                self._stop_audio()
+                self._enter(State.WAITING)
+            elif name == "sleep" and self.state not in (State.ASLEEP, State.BEDTIME) and not self._lullaby_pending():
                 self._start_song(LULLABY, State.BEDTIME)
+            elif name == "still" and self.state != State.ASLEEP:
+                # Notbremse der Eltern: Musik aus, hinlegen, Motoren aus.
+                self._stop_audio()
+                self._fall_asleep(STILL_S)
             elif name == "wake" and self.state == State.ASLEEP:
                 self.start()
 
@@ -241,7 +260,7 @@ class Controller:
         self.presses += 1
         if not self.settings.antenna_buttons:
             return
-        if self.state == State.WAITING and not self._session_over(now):
+        if self.state == State.WAITING and self.pending is None and not self._session_over(now):
             self._start_song(self._next_song(), State.PLAYING)
         elif self.state == State.PLAYING:
             self.hop_start = now  # Ursache → Wirkung: fröhlicher Extra-Hüpfer
@@ -258,31 +277,57 @@ class Controller:
         factor = LULLABY_VOLUME_FACTOR if song is LULLABY else 1.0
         return self.settings.volume * factor
 
+    def _lullaby_pending(self) -> bool:
+        return self.pending is not None and self.pending[0] is LULLABY
+
     def _start_song(self, song: Song, state: State) -> None:
+        """Lässt die WAV-Datei im Hintergrund erzeugen; das Lied beginnt, sobald sie fertig ist."""
         self._stop_audio()
-        path = synth.song_wav(song, self._volume_for(song), self.cache_dir)
+        if self.state != State.WAITING:
+            self._enter(State.WAITING)  # bis das neue Lied bereit ist, ruhig warten statt ohne Musik weiterzutanzen
+        volume = self._volume_for(song)
+        self.pending = (song, state, self.submit(synth.song_wav, song, volume, self.cache_dir))
+        if self.pending[2].done():  # schon im Speicher: ohne Verzögerung los
+            self._play_pending()
+
+    def _play_pending(self) -> None:
+        assert self.pending is not None
+        song, state, future = self.pending
+        self.pending = None
+        try:
+            path = future.result()
+            self.robot.media.play_sound(str(path))
+        except Exception:
+            logger.warning("%s lässt sich nicht abspielen", song.title, exc_info=True)
+            if state == State.BEDTIME:
+                self._fall_asleep()  # auch ohne Gute-Nacht-Lied schlafen gehen
+            return
         self.song = song
         self._enter(state)
-        self.robot.media.play_sound(str(path))
         self.song_start = self.clock()
         logger.info("Spiele %s", song.title)
 
     def _song_finished(self) -> None:
         if self.state == State.BEDTIME:
-            self.song = None
-            self.state = State.ASLEEP
-            self.state_start = self.clock()
-            # Nicht goto_sleep(): das SDK spielt dabei go_sleep.wav in voller
-            # Lautstärke, an der Begrenzung der App vorbei.
-            self.robot.goto_target(
-                SLEEP_HEAD_POSE, antennas=list(SLEEP_ANTENNAS_RAD), duration=SLEEP_S, body_yaw=0.0
-            )
-            try:
-                self.last_antennas_rad = list(self.robot.get_present_antenna_joint_positions())
-            except Exception:
-                logger.debug("Antennenposition nach dem Einschlafen nicht lesbar", exc_info=True)
+            self._fall_asleep()
             return
         self._enter(State.WAITING)
+
+    def _fall_asleep(self, duration: float = SLEEP_S) -> None:
+        self.pending = None
+        self.song = None
+        self.state = State.ASLEEP
+        self.state_start = self.clock()
+        # Nicht goto_sleep(): das SDK spielt dabei go_sleep.wav in voller
+        # Lautstärke, an der Begrenzung der App vorbei.
+        self.robot.goto_target(SLEEP_HEAD_POSE, antennas=list(SLEEP_ANTENNAS_RAD), duration=duration, body_yaw=0.0)
+        # Wie im SDK: schlafend liegt der Roboter mit abgeschalteten Motoren,
+        # damit ein Kind nicht gegen die Motorkraft drückt (skills/safe-torque.md).
+        self.robot.disable_motors()
+        try:
+            self.last_antennas_rad = list(self.robot.get_present_antenna_joint_positions())
+        except Exception:
+            logger.debug("Antennenposition nach dem Einschlafen nicht lesbar", exc_info=True)
 
     def _enter(self, state: State) -> None:
         self.blend_from = self.last_pose

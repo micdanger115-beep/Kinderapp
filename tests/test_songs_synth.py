@@ -59,4 +59,21 @@ def test_song_wav_is_cached(tmp_path):
     mtime = p1.stat().st_mtime_ns
     p2 = synth.song_wav(LULLABY, 0.41, tmp_path)  # gleiche 5-%-Stufe
     assert p1 == p2 and p2.stat().st_mtime_ns == mtime
-    assert p1.name == "gute_nacht_v040.wav"
+    assert p1.name == f"gute_nacht_{synth.song_key(LULLABY)}_v040.wav"
+
+
+def test_changed_song_gets_new_cache_file(tmp_path):
+    import dataclasses
+
+    longer = dataclasses.replace(LULLABY, repeats=LULLABY.repeats + 1)
+    assert synth.song_key(longer) != synth.song_key(LULLABY)
+    old = tmp_path / "gute_nacht_v040.wav"  # Datei aus einer früheren Version
+    old.write_bytes(b"alt")
+    stale_tmp = tmp_path / "entchen_abc_v040.wav.123.tmp"
+    stale_tmp.write_bytes(b"halb")
+    pin = tmp_path / "eltern_pin"
+    pin.write_text("salz:hash")
+    current = synth.song_wav(LULLABY, 0.4, tmp_path)
+    synth.clean_cache(tmp_path, [LULLABY])
+    assert current.exists() and pin.exists()
+    assert not old.exists() and not stale_tmp.exists()

@@ -46,22 +46,28 @@ Alle Melodien sind traditionell und gemeinfrei. Die Musik wird direkt auf dem Ro
 - Kleine Ausschläge: Kopf neigt sich höchstens 12°, dreht sich höchstens 20°, der Körper dreht sich höchstens 20°.
   Diese Grenzen werden im Code bei jeder Bewegung erzwungen (`tanz_reachy/dances.py`).
 - Lautstärke der Musik höchstens 60 % (Standard 40 %), sanft ein- und ausgeblendet.
-  Das ist ein Anteil der eingestellten Systemlautstärke des Roboters, die Systemlautstärke selbst begrenzt die App nicht.
+  Das ist ein Anteil der eingestellten Systemlautstärke des Roboters. Die App verstellt die Systemlautstärke nicht,
+  zeigt auf der Eltern-Webseite aber einen Hinweis, wenn sie über 50 % steht.
   Das Gute-Nacht-Lied ist etwas leiser als die Tanzlieder.
-- Ungültige Werte von der Webseite werden abgelehnt, und ein einzelner Fehler (z. B. kurz keine Verbindung) beendet die App nicht.
-- Begrenzte Spielzeit, danach Schlafen.
-- Beim Beenden der App fährt Reachy immer langsam in die Ruheposition.
+- Ungültige Werte von der Webseite werden abgelehnt, und Störungen bis 20 Sekunden (z. B. kurz keine Verbindung) beenden die App nicht.
+- Begrenzte Spielzeit (höchstens 30 Minuten), danach Schlafen.
+- Schlafend liegt Reachy in der Schlafstellung mit **abgeschalteten Motoren**, damit ein Kind nicht gegen die Motorkraft drückt.
+- Beim Beenden der App legt sich Reachy hin und schaltet die Motoren ab, ohne lauten Systemton.
 - Bitte nur unter Aufsicht benutzen und Reachy stabil auf den Boden oder einen niedrigen Tisch stellen.
 
 ## Eltern-Webseite
 
 Wenn die App läuft, im selben WLAN am Handy öffnen: **http://reachy-mini.local:8042**
-Dort gibt es Start und Stopp, Liedauswahl, Gute Nacht und Aufwecken, Lautstärke, Spielzeit
+Dort gibt es **Sofort still**, Start und Stopp, Liedauswahl, Gute Nacht und Aufwecken, Lautstärke, Spielzeit
 und einen Schalter, ob das Kind per Antenne starten darf.
 
+**Sofort still** schaltet die Musik aus, Reachy legt sich in 1,5 Sekunden hin, und die Motoren gehen aus.
+Sofort still, Stopp und Gute Nacht gehen auch ohne PIN, damit z. B. ein Babysitter Reachy jederzeit beruhigen kann.
+
 Beim ersten Öffnen legt ihr einen **Eltern-PIN** fest (mindestens 4 Zeichen). Ohne PIN kann niemand
-im WLAN den Roboter steuern, auch keine fremde Webseite. Das Handy merkt sich den PIN.
-Nach 5 falschen Versuchen ist die Seite eine Minute gesperrt.
+im WLAN Lieder starten, Reachy aufwecken oder Einstellungen ändern, auch keine fremde Webseite. Das Handy merkt sich den PIN.
+Nach 5 falschen Versuchen ist nur das Gerät gesperrt, von dem sie kamen: erst eine Minute, bei jeder weiteren Sperre doppelt so lang.
+Die Webseite antwortet nur unter Adressen aus dem Heimnetz (z. B. `reachy-mini.local` oder die IP-Adresse).
 PIN vergessen? Die App im Reachy-Dashboard neu starten: In den ersten 5 Minuten danach kann ein neuer PIN festgelegt werden.
 
 Stopp während des Gute-Nacht-Lieds beendet das Lied, und Reachy schläft sofort ein.
