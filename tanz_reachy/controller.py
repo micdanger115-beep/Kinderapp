@@ -27,6 +27,17 @@ TICK_S = 0.02  # 50 Hz Regelschleife
 BLEND_S = 1.2  # weicher Übergang zwischen zwei Zuständen
 HOP_S = 0.6
 REST_ANTENNAS_RAD = (-0.1745, 0.1745)  # wie INIT_ANTENNAS_JOINT_POSITIONS im SDK
+# Schlafstellung wie SLEEP_HEAD_POSE / SLEEP_ANTENNAS_JOINT_POSITIONS im SDK
+SLEEP_HEAD_POSE = np.array(
+    [
+        [0.911, 0.004, 0.413, -0.021],
+        [-0.004, 1.0, -0.001, 0.001],
+        [-0.413, -0.001, 0.911, -0.044],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+)
+SLEEP_ANTENNAS_RAD = (-3.05, 3.05)
+SLEEP_S = 3.0  # langsam einschlafen
 
 MAX_VOLUME = 0.6
 LULLABY_VOLUME_FACTOR = 0.7  # Gute-Nacht-Lied leiser als die Tanzlieder
@@ -130,7 +141,11 @@ class Controller:
 
     # ---------- Ablauf ----------
     def start(self) -> None:
-        """Sanftes Aufwachen: langsam in die Ruheposition, kurzes Hallo-Winken."""
+        """Sanftes Aufwachen: Motoren an, langsam in die Ruheposition."""
+        # Der Daemon lässt den Roboter nach jedem App-Ende mit abgeschalteten
+        # Motoren liegen. enable_motors() hält dabei die aktuelle Stellung fest,
+        # der Kopf springt also nicht.
+        self.robot.enable_motors()
         self.robot.goto_target(
             self.make_head_pose(degrees=True), antennas=list(REST_ANTENNAS_RAD), duration=2.0, body_yaw=0.0
         )
@@ -257,7 +272,11 @@ class Controller:
             self.song = None
             self.state = State.ASLEEP
             self.state_start = self.clock()
-            self.robot.goto_sleep()
+            # Nicht goto_sleep(): das SDK spielt dabei go_sleep.wav in voller
+            # Lautstärke, an der Begrenzung der App vorbei.
+            self.robot.goto_target(
+                SLEEP_HEAD_POSE, antennas=list(SLEEP_ANTENNAS_RAD), duration=SLEEP_S, body_yaw=0.0
+            )
             try:
                 self.last_antennas_rad = list(self.robot.get_present_antenna_joint_positions())
             except Exception:
