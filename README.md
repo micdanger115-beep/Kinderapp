@@ -46,7 +46,9 @@ Alle Melodien sind traditionell und gemeinfrei. Die Musik wird direkt auf dem Ro
 - Kleine Ausschläge: Kopf neigt sich höchstens 12°, dreht sich höchstens 20°, der Körper dreht sich höchstens 20°.
   Diese Grenzen werden im Code bei jeder Bewegung erzwungen (`tanz_reachy/dances.py`).
 - Lautstärke der Musik höchstens 60 % (Standard 40 %), sanft ein- und ausgeblendet.
-  Das ist ein Anteil der eingestellten Systemlautstärke des Roboters.
+  Das ist ein Anteil der eingestellten Systemlautstärke des Roboters, die Systemlautstärke selbst begrenzt die App nicht.
+  Das Gute-Nacht-Lied ist etwas leiser als die Tanzlieder.
+- Ungültige Werte von der Webseite werden abgelehnt, und ein einzelner Fehler (z. B. kurz keine Verbindung) beendet die App nicht.
 - Begrenzte Spielzeit, danach Schlafen.
 - Beim Beenden der App fährt Reachy immer langsam in die Ruheposition.
 - Bitte nur unter Aufsicht benutzen und Reachy stabil auf den Boden oder einen niedrigen Tisch stellen.
@@ -56,6 +58,13 @@ Alle Melodien sind traditionell und gemeinfrei. Die Musik wird direkt auf dem Ro
 Wenn die App läuft, im selben WLAN am Handy öffnen: **http://reachy-mini.local:8042**
 Dort gibt es Start und Stopp, Liedauswahl, Gute Nacht und Aufwecken, Lautstärke, Spielzeit
 und einen Schalter, ob das Kind per Antenne starten darf.
+
+Beim ersten Öffnen legt ihr einen **Eltern-PIN** fest (mindestens 4 Zeichen). Ohne PIN kann niemand
+im WLAN den Roboter steuern, auch keine fremde Webseite. Das Handy merkt sich den PIN.
+Nach 5 falschen Versuchen ist die Seite eine Minute gesperrt.
+PIN vergessen? Die App im Reachy-Dashboard neu starten: In den ersten 5 Minuten danach kann ein neuer PIN festgelegt werden.
+
+Stopp während des Gute-Nacht-Lieds beendet das Lied, und Reachy schläft sofort ein.
 
 ## Installation auf dem Reachy Mini Wireless
 
@@ -67,7 +76,9 @@ Das Reachy-Mini-Dashboard installiert Apps aus einem Hugging-Face-Space. Der üb
    pip install reachy-mini
    reachy-mini-app-assistant publish . --private
    ```
-3. Im Reachy-Mini-Dashboard die App aus dem Space installieren und starten.
+3. Weil der Space privat ist, braucht der Roboter Zugriff darauf: Im Reachy-Mini-Dashboard zuerst einen
+   Hugging-Face-Token (unter huggingface.co → Settings → Access Tokens, Leserechte reichen) hinterlegen.
+4. Danach im Dashboard die App aus dem privaten Space installieren und starten.
 
 `reachy-mini-app-assistant check .` prüft vorher, ob die App korrekt aufgebaut ist.
 

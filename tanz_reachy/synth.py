@@ -14,7 +14,9 @@ import numpy as np
 from .songs import Song
 
 SAMPLE_RATE = 22050
-FADE_S = 0.6  # sanftes Ein-/Ausblenden des ganzen Lieds
+FADE_S = 0.6  # sanftes Ausblenden am Liedende
+FADE_IN_S = 1.5  # Liedanfang leiser, aber schon der erste Ton gut hörbar
+FADE_IN_FLOOR = 0.5
 
 # Akkordgrundton je Melodieton (C-Dur, I/IV/V), für die Basslinie
 _ROOT_FOR_PITCH_CLASS = {0: 48, 4: 48, 7: 48, 5: 53, 9: 53, 2: 43, 11: 43}
@@ -70,10 +72,10 @@ def render(song: Song, volume: float = 0.4) -> np.ndarray:
     peak = np.max(np.abs(out)) or 1.0
     out = out / peak
 
+    fade_in = int(FADE_IN_S * SAMPLE_RATE)
+    out[:fade_in] *= np.linspace(FADE_IN_FLOOR, 1.0, fade_in)
     fade = int(FADE_S * SAMPLE_RATE)
-    ramp = np.linspace(0.0, 1.0, fade)
-    out[:fade] *= ramp
-    out[-fade:] *= ramp[::-1]
+    out[-fade:] *= np.linspace(1.0, 0.0, fade)
     return (out * float(np.clip(volume, 0.0, 1.0))).astype(np.float32)
 
 

@@ -146,9 +146,13 @@ LULLABY = Song(
     repeats=2,
     pickup_beats=1.0,
     melody=(
+        # "Guten Abend, gut' Nacht, mit Rosen bedacht, mit Näglein besteckt, schlupf unter die Deck'"
         "E5:0.5 E5:0.5 | G5:1.5 E5:0.5 E5 | G5:2 E5:0.5 G5:0.5 | C6 B5:1.5 A5:0.5 |"
         " A5 G5 D5:0.5 E5:0.5 | F5 D5 D5:0.5 E5:0.5 | F5:2 D5:0.5 F5:0.5 |"
         " B5:0.5 A5:0.5 G5 B5 | C6:2"
+        # "Morgen früh, wenn Gott will, wirst du wieder geweckt" (zweimal)
+        " C5:0.5 C5:0.5 | C6:2 A5:0.5 F5:0.5 | G5:2 E5:0.5 C5:0.5 | F5 G5 A5 | G5:2"
+        " C5:0.5 C5:0.5 | C6:2 A5:0.5 F5:0.5 | G5:2 E5:0.5 C5:0.5 | F5 E5 D5 | C5:2"
     ),
 )
 

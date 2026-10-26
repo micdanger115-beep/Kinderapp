@@ -61,12 +61,12 @@ def _bump(phase: float) -> float:
 
 def entchen(t: float, bar: int) -> DancePose:
     # Watscheln: seitliches Wiegen alle zwei Schläge, Antennen als Flügel.
-    # Takt 7 "Köpfchen in das Wasser": Kopf taucht ab, Takt 8 "Schwänzchen in
-    # die Höh'": Kopf geht hoch (das Lied hat 10 Takte).
+    # Takte 7–8 "Köpfchen in das Wasser": Kopf taucht ab, Takte 9–10
+    # "Schwänzchen in die Höh'": Kopf geht hoch (das Lied hat 10 Takte).
     sway = np.sin(TAU * t / 2.0)
     bar_in_song = int(t // bar) % 10
     in_bar = _bump((t % bar) / bar)
-    dip = in_bar if bar_in_song == 6 else -0.6 * in_bar if bar_in_song == 7 else 0.0
+    dip = in_bar if bar_in_song in (6, 7) else -0.6 * in_bar if bar_in_song in (8, 9) else 0.0
     flap = 15.0 * np.cos(TAU * t / 2.0)
     return DancePose(
         roll=9.0 * sway,

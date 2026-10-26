@@ -8,19 +8,68 @@ const STATE_TEXT = {
 const $ = (id) => document.getElementById(id);
 let songsRendered = false;
 let editing = false; // Regler nicht überschreiben, während jemand daran zieht
+let pinSet = true;
+let pinWrong = false;
+let pinResetAllowed = false; // kurz nach dem App-Start darf ein vergessener PIN ersetzt werden
+
+function storedPin() {
+    try { return localStorage.getItem("eltern_pin") || ""; } catch (e) { return ""; }
+}
+function storePin(pin) {
+    try { localStorage.setItem("eltern_pin", pin); } catch (e) { /* nur bis zum Neuladen */ }
+    sessionPin = pin;
+}
+let sessionPin = storedPin();
 
 async function post(path, body) {
     try {
-        await fetch(path, {
+        const res = await fetch(path, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            // Der PIN-Header ist Pflicht, auch als Schutz vor fremden Webseiten.
+            headers: { "Content-Type": "application/json", "X-Eltern-PIN": sessionPin },
             body: JSON.stringify(body || {}),
         });
+        if (res.status === 401) pinWrong = true;
         refresh();
+        return res;
     } catch (e) {
         $("status").textContent = "Keine Verbindung zu Reachy";
     }
 }
+
+function pinMustBeCreated() {
+    return !pinSet || (pinWrong && pinResetAllowed);
+}
+
+function renderPinBox() {
+    const show = !pinSet || pinWrong || !sessionPin;
+    $("pin-box").hidden = !show;
+    if (pinMustBeCreated()) {
+        $("pin-title").textContent = pinSet ? "Neuen Eltern-PIN festlegen" : "Eltern-PIN festlegen";
+        $("pin-hint").textContent = "Damit nur ihr Reachy über diese Seite steuern könnt. Mindestens 4 Zeichen.";
+    } else {
+        $("pin-title").textContent = "Eltern-PIN eingeben";
+        $("pin-hint").textContent = pinWrong
+            ? "PIN falsch oder zu viele Versuche. PIN vergessen? App im Reachy-Dashboard neu starten, dann kann 5 Minuten lang ein neuer PIN festgelegt werden."
+            : "Bitte den Eltern-PIN eingeben.";
+    }
+}
+
+$("pin-btn").addEventListener("click", async () => {
+    const pin = $("pin-input").value.trim();
+    if (!pin) return;
+    if (pinMustBeCreated()) {
+        const res = await post("/api/pin", { new_pin: pin });
+        if (!res || !res.ok) {
+            $("pin-hint").textContent = "PIN braucht mindestens 4 Zeichen.";
+            return;
+        }
+    }
+    storePin(pin);
+    pinWrong = false;
+    $("pin-input").value = "";
+    refresh();
+});
 
 function renderSongs(songs) {
     const box = $("songs");
@@ -50,6 +99,9 @@ async function refresh() {
         return;
     }
     if (!songsRendered) renderSongs(st.songs);
+    pinSet = st.pin_set;
+    pinResetAllowed = st.pin_reset_allowed;
+    renderPinBox();
 
     let text = STATE_TEXT[st.state] || st.state;
     if (st.song) text = `${st.song.emoji} ${st.song.title}`;

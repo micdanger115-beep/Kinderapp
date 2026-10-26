@@ -28,7 +28,7 @@ exclude = ["tests*", "build*"]
 [tool.setuptools.package-data]
 tanz_reachy = ["**/*"] # Also include all non-.py files
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "httpx"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

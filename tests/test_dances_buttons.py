@@ -5,14 +5,32 @@ from tanz_reachy import dances
 from tanz_reachy.buttons import AntennaPressDetector
 
 
+def _within_limits(p):
+    return (
+        abs(p.roll) <= dances.MAX_TILT_DEG
+        and abs(p.pitch) <= dances.MAX_TILT_DEG
+        and abs(p.yaw) <= dances.MAX_YAW_DEG
+        and abs(p.body_yaw) <= dances.MAX_BODY_YAW_DEG
+        and abs(p.z) <= dances.MAX_Z_MM
+        and abs(p.antenna_right) <= dances.MAX_ANTENNA_DEG
+        and abs(p.antenna_left) <= dances.MAX_ANTENNA_DEG
+    )
+
+
 @pytest.mark.parametrize("name", list(dances.DANCES))
 def test_dances_stay_within_child_safe_limits(name):
+    # Die Tänze selbst bleiben in den Grenzen, nicht erst nach clamp().
     fn = dances.DANCES[name]
+    for bar in (3, 4):
+        for t in np.linspace(0, 80, 4001):
+            assert _within_limits(fn(t, bar)), t
+    assert all(_within_limits(dances.warten(t)) for t in np.linspace(0, 60, 3001))
+
+
+def test_clamp_enforces_limits_even_with_hop():
     for t in np.linspace(0, 80, 4001):
-        p = dances.clamp(fn(t, 4) + dances.huepfer((t % 1.0)))
-        assert abs(p.roll) <= dances.MAX_TILT_DEG and abs(p.pitch) <= dances.MAX_TILT_DEG
-        assert abs(p.yaw) <= dances.MAX_YAW_DEG and abs(p.body_yaw) <= dances.MAX_BODY_YAW_DEG
-        assert abs(p.z) <= dances.MAX_Z_MM
+        big = dances.DancePose(*(50.0 for _ in range(7)))
+        assert _within_limits(dances.clamp(dances.DANCES["jakob"](t, 4) + dances.huepfer(t % 1.0) + big))
 
 
 @pytest.mark.parametrize("name", list(dances.DANCES))

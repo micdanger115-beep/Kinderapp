@@ -50,6 +50,11 @@ button {
     min-height: 56px;
     color: white;
 }
+.pin-box { background: var(--card); border-radius: 16px; padding: 4px 16px 16px; margin-top: 1rem; }
+.pin-box .row { margin-top: 0.5rem; }
+.pin-box input { font: inherit; font-size: 1.2rem; min-height: 56px; padding: 0 12px; border-radius: 12px;
+    border: 1px solid var(--muted); background: var(--bg); color: var(--text); min-width: 0; }
+
 button:disabled { opacity: 0.4; cursor: default; }
 .big { font-size: 1.15rem; font-weight: 600; padding: 0 12px; }
 .primary { background: var(--primary); }
