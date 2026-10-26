@@ -63,7 +63,8 @@ def entchen(t: float, bar: int) -> DancePose:
     # Watscheln: seitliches Wiegen alle zwei Schläge, Antennen als Flügel.
     # Takte 7–8 "Köpfchen in das Wasser": Kopf taucht ab, Takte 9–10
     # "Schwänzchen in die Höh'": Kopf geht hoch (das Lied hat 10 Takte).
-    sway = np.sin(TAU * t / 2.0)
+    # cos: Richtungswechsel genau auf dem Schlag, nicht auf dem "und".
+    sway = np.cos(TAU * t / 2.0)
     bar_in_song = int(t // bar) % 10
     in_bar = _bump((t % bar) / bar)
     dip = in_bar if bar_in_song in (6, 7) else -0.6 * in_bar if bar_in_song in (8, 9) else 0.0
@@ -86,7 +87,7 @@ def haenschen(t: float, bar: int) -> DancePose:
         yaw=14.0 * look,
         z=5.0 * step,
         pitch=-3.0 * step,
-        roll=3.0 * np.sin(TAU * t / 2.0),
+        roll=3.0 * np.cos(TAU * t / 2.0),
         antenna_right=-10.0 * step,
         antenna_left=10.0 * step,
         body_yaw=12.0 * look,
@@ -95,10 +96,11 @@ def haenschen(t: float, bar: int) -> DancePose:
 
 def jakob(t: float, bar: int) -> DancePose:
     # Glocken: Antennen schwingen wie Glockenklöppel, Kopf nickt im Takt.
-    bell = 25.0 * np.sin(TAU * t / 2.0)
+    # Umkehrpunkte und tiefster Punkt des Nickens (positiver Pitch = nach unten) liegen auf dem Schlag.
+    bell = 25.0 * np.cos(TAU * t / 2.0)
     return DancePose(
-        pitch=7.0 * np.sin(TAU * t),
-        roll=5.0 * np.sin(TAU * t / 2.0),
+        pitch=7.0 * np.cos(TAU * t),
+        roll=5.0 * np.cos(TAU * t / 2.0),
         antenna_right=bell,
         antenna_left=bell,
         body_yaw=8.0 * np.sin(TAU * t / (2 * bar)),
@@ -120,13 +122,14 @@ def stern(t: float, bar: int) -> DancePose:
 
 
 def wiegenlied(t: float, bar: int) -> DancePose:
-    # Wiegen: langsames Schaukeln über einen ganzen Takt, Antennen sinken ab.
+    # Wiegen: langsames Schaukeln über einen ganzen Takt, Antennen sinken ab
+    # (in Richtung der Schlafstellung: rechts negativ, links positiv).
     rock = np.sin(TAU * t / bar)
     return DancePose(
         roll=7.0 * rock,
         pitch=4.0,
-        antenna_right=12.0 + 3.0 * rock,
-        antenna_left=-12.0 - 3.0 * rock,
+        antenna_right=-12.0 - 3.0 * rock,
+        antenna_left=12.0 + 3.0 * rock,
         body_yaw=5.0 * rock,
     )
 

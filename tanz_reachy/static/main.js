@@ -114,9 +114,15 @@ async function refresh() {
     });
     const asleep = st.state === "schlafen";
     $("play-btn").disabled = asleep;
-    $("sleep-btn").disabled = asleep;
+    $("sleep-btn").disabled = asleep || st.state === "gute_nacht";
     $("wake-btn").disabled = !asleep;
     $("stop-btn").disabled = !(st.state === "lied" || st.state === "gute_nacht");
+    $("still-btn").disabled = asleep;
+
+    const sysVol = st.system_volume;
+    $("volume-warning").hidden = !(sysVol > st.system_volume_warn);
+    $("volume-warning").textContent = `Die Grundlautstärke von Reachy steht auf ${sysVol} %. `
+        + `Für Kinderohren bitte im Reachy-Dashboard auf höchstens ${st.system_volume_warn} % stellen.`;
 
     if (!editing) {
         const vol = Math.round(st.settings.volume * 100);
@@ -131,6 +137,7 @@ async function refresh() {
 
 $("play-btn").addEventListener("click", () => post("/api/play", {}));
 $("stop-btn").addEventListener("click", () => post("/api/stop"));
+$("still-btn").addEventListener("click", () => post("/api/still"));
 $("sleep-btn").addEventListener("click", () => post("/api/sleep"));
 $("wake-btn").addEventListener("click", () => post("/api/wake"));
 

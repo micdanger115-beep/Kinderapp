@@ -71,3 +71,20 @@ def test_small_tracking_lag_is_not_a_press():
     d = AntennaPressDetector()
     assert not any(d.update(i * 0.02, [0.0, 0.0], [0.15, -0.15]) for i in range(100))
     assert not d.update(0, [0.0, 0.0], None)
+
+
+def test_moves_turn_around_on_the_beat():
+    # Umkehrpunkte (größte Auslenkung) auf dem Schlag, nicht auf dem "und".
+    for t in (4.0, 5.0, 6.0):
+        assert abs(dances.jakob(t, 4).pitch) == pytest.approx(7.0)  # tiefster/höchster Punkt beim Nicken
+        assert abs(dances.jakob(t, 4).antenna_right) == pytest.approx(25.0)
+        assert abs(dances.entchen(t, 4).roll) == pytest.approx(9.0)
+        assert abs(dances.haenschen(t, 4).roll) == pytest.approx(3.0)
+    assert dances.jakob(4.0, 4).pitch > 0  # auf dem Schlag nickt der Kopf nach unten
+
+
+def test_lullaby_antennas_droop_towards_sleep():
+    # Schlafstellung im SDK: rechts -3.05 rad, links +3.05 rad
+    for t in np.linspace(0, 6, 25):
+        pose = dances.wiegenlied(t, 3)
+        assert pose.antenna_right < 0 < pose.antenna_left

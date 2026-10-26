@@ -1,3 +1,6 @@
+from concurrent.futures import Future
+from pathlib import Path
+
 import numpy as np
 
 from tanz_reachy.controller import Controller, State, REST_ANTENNAS_RAD, SLEEP_ANTENNAS_RAD
@@ -41,6 +44,9 @@ class FakeRobot:
     def enable_motors(self):
         self.calls.append("enable_motors")
 
+    def disable_motors(self):
+        self.calls.append("disable_motors")
+
     def goto_target(self, head=None, antennas=None, duration=0.5, body_yaw=0.0):
         self.calls.append("goto_target")
         if antennas is not None and tuple(antennas) == SLEEP_ANTENNAS_RAD:
@@ -63,10 +69,20 @@ def fake_pose(**kw):
     return kw
 
 
-def make(tmp_path):
+def sync_submit(fn, *args):
+    """Erzeugt sofort statt im Hintergrund, damit die Tests Takt für Takt vorhersagbar sind."""
+    f = Future()
+    try:
+        f.set_result(fn(*args))
+    except Exception as e:
+        f.set_exception(e)
+    return f
+
+
+def make(tmp_path, robot=None):
     clock = FakeClock()
-    robot = FakeRobot()
-    c = Controller(robot, tmp_path, clock=clock, make_head_pose=fake_pose)
+    robot = robot or FakeRobot()
+    c = Controller(robot, tmp_path, clock=clock, make_head_pose=fake_pose, submit=sync_submit)
     c.start()
     return c, robot, clock
 
@@ -91,7 +107,8 @@ def test_antenna_press_starts_next_song_and_returns_to_waiting(tmp_path):
     assert c.state == State.WAITING
     press(c, clock, robot)
     assert c.state == State.PLAYING and c.song == SONGS[0]
-    assert robot.media.played[-1].endswith("entchen_v040.wav")
+    assert Path(robot.media.played[-1]).name.startswith("entchen_")
+    assert robot.media.played[-1].endswith("_v040.wav")
     run_for(c, clock, SONGS[0].duration_s + 1)
     assert c.state == State.WAITING
     press(c, clock, robot)
@@ -217,7 +234,7 @@ def test_lullaby_is_quieter(tmp_path):
     c, robot, clock = make(tmp_path)
     c.send("sleep")
     run_for(c, clock, 0.1)
-    assert robot.media.played[-1].endswith("gute_nacht_v030.wav")  # 0.4 * 0.7
+    assert robot.media.played[-1].endswith("_v030.wav")  # 0.4 * 0.7
 
 
 def test_press_after_session_end_does_not_start_new_song(tmp_path):
@@ -264,7 +281,7 @@ def test_single_error_does_not_end_app(tmp_path):
     t = _run_briefly(c, 0.3)
     assert not t.is_alive()
     assert len(robot.targets) > 3  # lief nach den Fehlern weiter
-    assert robot.gotos[-1] == 1.5  # beim Beenden in Ruheposition
+    assert robot.sleeps == 1 and robot.calls[-1] == "disable_motors"  # beim Beenden hinlegen, Motoren aus
 
 
 def test_shutdown_while_asleep_keeps_robot_asleep(tmp_path):
@@ -275,6 +292,7 @@ def test_shutdown_while_asleep_keeps_robot_asleep(tmp_path):
     c.start = lambda: None  # schon wach/schlafend, kein Aufwachen beim Start
     c.run(stop)
     assert robot.gotos == [2.0]  # nur das Aufwachen aus make(), kein Ruhe-goto
+    assert robot.sleeps == 0 and "disable_motors" not in robot.calls
 
 
 def test_sleep_pose_matches_sdk():
@@ -285,3 +303,148 @@ def test_sleep_pose_matches_sdk():
 
     assert np.allclose(SLEEP_HEAD_POSE, sdk.SLEEP_HEAD_POSE)
     assert list(SLEEP_ANTENNAS_RAD) == list(sdk.SLEEP_ANTENNAS_JOINT_POSITIONS)
+
+
+class DeferredSubmit:
+    """Hintergrund-Erzeugung, die erst auf Kommando fertig wird."""
+
+    def __init__(self):
+        self.jobs = []
+
+    def __call__(self, fn, *args):
+        f = Future()
+        self.jobs.append((fn, args, f))
+        return f
+
+    def finish_all(self):
+        for fn, args, f in self.jobs:
+            try:
+                f.set_result(fn(*args))
+            except Exception as e:
+                f.set_exception(e)
+        self.jobs.clear()
+
+
+def test_robot_sleeps_with_motors_off(tmp_path):
+    c, robot, clock = make(tmp_path)
+    c.send("sleep")
+    run_for(c, clock, LULLABY.duration_s + 1)
+    assert c.state == State.ASLEEP
+    assert robot.calls[-2:] == ["goto_target", "disable_motors"]  # erst hinlegen, dann Motoren aus
+
+
+def test_still_stops_music_and_motors_from_any_state(tmp_path):
+    c, robot, clock = make(tmp_path)
+    c.send("play", "jakob")
+    run_for(c, clock, 2)
+    stopped = robot.media.stopped
+    c.send("still")
+    run_for(c, clock, 0.1)
+    assert c.state == State.ASLEEP and c.song is None
+    assert robot.media.stopped > stopped
+    assert robot.calls[-1] == "disable_motors"
+    targets = len(robot.targets)
+    run_for(c, clock, 2)
+    assert len(robot.targets) == targets  # keine Bewegung mehr
+    c.send("wake")
+    run_for(c, clock, 0.1)
+    assert c.state == State.WAITING and "enable_motors" in robot.calls[-3:]
+
+
+def test_second_sleep_does_not_restart_lullaby(tmp_path):
+    c, robot, clock = make(tmp_path)
+    c.send("sleep")
+    run_for(c, clock, 30)
+    c.send("sleep")
+    run_for(c, clock, 0.1)
+    assert c.state == State.BEDTIME and len(robot.media.played) == 1
+    assert c._song_progress(clock()) > 0.3
+
+
+def test_falls_asleep_even_if_lullaby_cannot_be_made(tmp_path, monkeypatch):
+    from tanz_reachy import synth
+
+    def broken(*args):
+        raise OSError("Speicher voll")
+
+    monkeypatch.setattr(synth, "song_wav", broken)
+    c, robot, clock = make(tmp_path)
+    c.send("settings", {"session_minutes": 1})
+    run_for(c, clock, 61)
+    assert c.state == State.ASLEEP and robot.sleeps == 1
+    assert robot.calls[-1] == "disable_motors"
+
+
+def test_song_is_rendered_in_background_and_motion_continues(tmp_path):
+    submit = DeferredSubmit()
+    clock = FakeClock()
+    robot = FakeRobot()
+    c = Controller(robot, tmp_path, clock=clock, make_head_pose=fake_pose, submit=submit)
+    c.start()
+    c.send("play", "stern")
+    run_for(c, clock, 0.5)
+    assert c.state == State.WAITING and robot.media.played == []
+    targets = len(robot.targets)
+    run_for(c, clock, 0.5)
+    assert len(robot.targets) > targets  # Tanzschleife läuft weiter, während das Lied entsteht
+    submit.finish_all()
+    run_for(c, clock, 0.1)
+    assert c.state == State.PLAYING and c.song.id == "stern" and len(robot.media.played) == 1
+
+
+def test_press_while_lullaby_is_prepared_starts_no_song(tmp_path):
+    submit = DeferredSubmit()
+    clock = FakeClock()
+    robot = FakeRobot()
+    c = Controller(robot, tmp_path, clock=clock, make_head_pose=fake_pose, submit=submit)
+    c.start()
+    c.send("settings", {"session_minutes": 1})
+    run_for(c, clock, 61)
+    assert c._lullaby_pending() and len(submit.jobs) == 1  # nur einmal angefordert
+    press(c, clock, robot)
+    assert c._lullaby_pending() and len(submit.jobs) == 1
+    submit.finish_all()
+    run_for(c, clock, 0.1)
+    assert c.state == State.BEDTIME and c.song == LULLABY
+
+
+def test_stop_while_lullaby_is_prepared_goes_to_sleep(tmp_path):
+    submit = DeferredSubmit()
+    clock = FakeClock()
+    robot = FakeRobot()
+    c = Controller(robot, tmp_path, clock=clock, make_head_pose=fake_pose, submit=submit)
+    c.start()
+    c.send("sleep")
+    run_for(c, clock, 0.1)
+    c.send("stop")
+    run_for(c, clock, 0.1)
+    assert c.state == State.ASLEEP and c.pending is None
+
+
+class BrokenRobot(FakeRobot):
+    def set_target(self, head, antennas, body_yaw):
+        raise ConnectionError("Daemon weg")
+
+
+class StepClock(FakeClock):
+    """Jede Abfrage lässt 0,1 s vergehen, damit lange Störungen schnell simuliert sind."""
+
+    def __call__(self):
+        self.t += 0.1
+        return self.t
+
+
+def test_long_outage_ends_app_but_short_one_does_not(tmp_path):
+    import threading
+
+    import pytest
+
+    from tanz_reachy.controller import MAX_ERROR_S
+
+    robot = BrokenRobot()
+    clock = StepClock()
+    c = Controller(robot, tmp_path, clock=clock, make_head_pose=fake_pose, submit=sync_submit)
+    with pytest.raises(ConnectionError):
+        c.run(threading.Event())
+    assert clock.t - 100.0 > MAX_ERROR_S
+    assert robot.calls[-1] == "disable_motors"  # beim Aufgeben trotzdem hinlegen

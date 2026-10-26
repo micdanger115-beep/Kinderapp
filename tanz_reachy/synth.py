@@ -5,6 +5,8 @@ Anschlag, langsames Ausklingen, dazu ein leiser Basston auf jedem Taktanfang.
 Keine harten Klicks, keine schrillen Höhen.
 """
 
+import hashlib
+import logging
 import threading
 import wave
 from pathlib import Path
@@ -13,10 +15,15 @@ import numpy as np
 
 from .songs import Song
 
+logger = logging.getLogger(__name__)
+
 SAMPLE_RATE = 22050
 FADE_S = 0.6  # sanftes Ausblenden am Liedende
 FADE_IN_S = 1.5  # Liedanfang leiser, aber schon der erste Ton gut hörbar
 FADE_IN_FLOOR = 0.5
+
+# Ändert sich dieser Synthesizer, ändern sich auch die Dateinamen im Zwischenspeicher.
+_SOURCE_HASH = hashlib.sha256(Path(__file__).read_bytes()).digest()
 
 # Akkordgrundton je Melodieton (C-Dur, I/IV/V), für die Basslinie
 _ROOT_FOR_PITCH_CLASS = {0: 48, 4: 48, 7: 48, 5: 53, 9: 53, 2: 43, 11: 43}
@@ -88,6 +95,17 @@ def write_wav(path: Path, samples: np.ndarray) -> None:
         f.writeframes(pcm.tobytes())
 
 
+def song_key(song: Song) -> str:
+    """Kurzer Fingerabdruck aus Noten, Tempo und diesem Synthesizer.
+
+    Steht im Dateinamen: Ändert ein Update eine Melodie oder den Klang, wird
+    die alte Datei im Zwischenspeicher nicht mehr verwendet.
+    """
+    h = hashlib.sha256(_SOURCE_HASH)
+    h.update(repr((song.melody, song.bpm, song.beats_per_bar, song.repeats, song.pickup_beats)).encode())
+    return h.hexdigest()[:10]
+
+
 def song_wav(song: Song, volume: float, cache_dir: Path) -> Path:
     """Gibt den Pfad zur WAV-Datei zurück und erzeugt sie bei Bedarf.
 
@@ -96,10 +114,25 @@ def song_wav(song: Song, volume: float, cache_dir: Path) -> Path:
     """
     level = int(round(np.clip(volume, 0.0, 1.0) * 20)) * 5
     cache_dir.mkdir(parents=True, exist_ok=True)
-    path = cache_dir / f"{song.id}_v{level:03d}.wav"
+    path = cache_dir / f"{song.id}_{song_key(song)}_v{level:03d}.wav"
     if not path.exists():
         # Eigener Temp-Name je Thread: Vorab-Erzeugung und Abspielen können gleichzeitig laufen.
         tmp = path.with_name(f"{path.stem}.{threading.get_ident()}.tmp")
         write_wav(tmp, render(song, level / 100.0))
         tmp.replace(path)
     return path
+
+
+def clean_cache(cache_dir: Path, songs: list[Song]) -> None:
+    """Löscht veraltete Lied-Dateien und Reste abgebrochener Erzeugung.
+
+    Nur beim App-Start aufrufen, solange noch nichts erzeugt wird.
+    """
+    keep = {f"{song.id}_{song_key(song)}_" for song in songs}
+    for path in [*cache_dir.glob("*.wav"), *cache_dir.glob("*.tmp")]:
+        if path.suffix == ".wav" and any(path.name.startswith(k) for k in keep):
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            logger.debug("%s nicht löschbar", path, exc_info=True)
